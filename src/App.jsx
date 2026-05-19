@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxgC9rWpNHmynaTk_b8YB9p5QDGcuvnisBcthzX6VTWFBtKTUlssK41eUVENIu6_M4feA/exec';
+const RECORD_ID_PREFIX = 'PSM-11288-';
 
 const drugs = [
   { name: 'ยาบ้า', Icon: Pill, color: 'text-rose-500', bg: 'bg-rose-100', desc: 'การประเมินจะช่วยให้เราวางแผนฟื้นฟูระบบประสาทได้อย่างถูกต้อง' },
@@ -26,12 +27,19 @@ const titles = {
   7: 'สรุปผลการประเมินเบื้องต้น'
 };
 
-const reasonsOptions = ['เครียด', 'เพื่อนชวน', 'ต้องการพลังงานทำงาน', 'นอนไม่หลับ'];
-const historyOptions = ['ไม่เคยลองเลย', 'เคยพยายามแล้ว'];
-const risksOptions = ['คนรอบตัวยังใช้อยู่', 'หาซื้อได้ง่าย', 'ความเครียด/ปัญหาครอบครัว'];
+const reasonsOptions = ['เครียด', 'เพื่อนชวน', 'ต้องการพลังงานทำงาน', 'นอนไม่หลับ', 'อยากลองของใหม่', 'อื่นๆ'];
+const historyOptions = ['ไม่เคยลองเลิกเลย', 'เคยพยายามเลิกแล้ว', 'เลิกได้แล้วกลับมาใช้ใหม่', 'ยังไม่พร้อมเลิก'];
+const risksOptions = ['คนรอบตัวยังใช้อยู่', 'หาซื้อได้ง่าย', 'ความเครียด/ปัญหาครอบครัว', 'ไม่มีงานอดิเรก/กิจกรรมอื่นๆ', 'ปัญหาสุขภาพจิต', 'อื่นๆ'];
 
 export default function App() {
-  const [step, setStep] = useState(1);
+
+  const [step, setStep] = useState(0);
+
+  // 👤 ข้อมูลผู้ประเมิน
+  const [nickname, setNickname] = useState('');
+  const [contact, setContact] = useState('');
+
+  // 📋 ข้อมูลแบบประเมิน
   const [drug, setDrug] = useState(null);
   const [otherDrug, setOtherDrug] = useState('');
   const [imp, setImp] = useState(null);
@@ -39,9 +47,12 @@ export default function App() {
   const [reasons, setReasons] = useState([]);
   const [history, setHistory] = useState(null);
   const [risks, setRisks] = useState([]);
+
+  // ⚙️ ระบบ
   const [isLoading, setIsLoading] = useState(false);
   const [countdown, setCountdown] = useState(15);
   const [messageBox, setMessageBox] = useState(null);
+  const [currentRecordId, setCurrentRecordId] = useState('');
 
   // Scroll to top on step change
   useEffect(() => {
@@ -51,7 +62,7 @@ export default function App() {
   // Countdown timer for step 7
   useEffect(() => {
     let timer;
-    if (step === 7) {
+    if (step === 7 && !messageBox) {
       timer = setInterval(() => {
         setCountdown((prev) => {
           if (prev <= 1) {
@@ -63,19 +74,28 @@ export default function App() {
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [step]);
+  }, [step, messageBox]);
 
   const resetApp = () => {
-    setStep(1);
-    setDrug(null);
-    setOtherDrug('');
-    setImp(null);
-    setConf(null);
-    setReasons([]);
-    setHistory(null);
-    setRisks([]);
-    setCountdown(15);
-  };
+
+  setStep(0);
+
+  setNickname('');
+  setContact('');
+
+  setDrug(null);
+  setOtherDrug('');
+
+  setImp(null);
+  setConf(null);
+
+  setReasons([]);
+  setHistory(null);
+  setRisks([]);
+
+  setCountdown(15);
+  setCurrentRecordId('');
+};
 
   const toggleArray = (state, setter, value) => {
     if (state.includes(value)) {
@@ -105,53 +125,152 @@ export default function App() {
     if (step > 1) setStep(step - 1);
   };
 
+  const normalizePhoneNumber = (value) => String(value || '').replace(/\D/g, '').slice(0, 10);
+  const formatPhoneForSheet = (value) => {
+    const phone = normalizePhoneNumber(value);
+    return phone ? `'${phone}` : '';
+  };
+  const formatRecordId = (number) => `${RECORD_ID_PREFIX}${String(number).padStart(3, '0')}`;
+  const getRecordIdNumber = (id) => {
+    const match = String(id || '').match(/^PSM-11288-(\d+)$/);
+    return match ? Number(match[1]) : 0;
+  };
+  const getNextRecordId = async () => {
+    try {
+      const response = await fetch(GOOGLE_SCRIPT_URL);
+      const rawData = await response.json();
+      const maxIdNumber = rawData.reduce((max, item) => {
+        return Math.max(max, getRecordIdNumber(item.ID));
+      }, 0);
+      const nextIdNumber = maxIdNumber + 1;
+      localStorage.setItem('lastRecordIdNumber', String(nextIdNumber));
+      return formatRecordId(nextIdNumber);
+    } catch (error) {
+      const lastLocalIdNumber = Number(localStorage.getItem('lastRecordIdNumber') || 0);
+      const nextIdNumber = lastLocalIdNumber + 1;
+      localStorage.setItem('lastRecordIdNumber', String(nextIdNumber));
+      return formatRecordId(nextIdNumber);
+    }
+  };
+  const postToSheet = async (payload) => {
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify(payload)
+    });
+
+    return response.text();
+  };
+
   // ✅ โค้ดใหม่ที่บันทึกข้อมูลจริง
   const handleSave = async () => {
     setIsLoading(true);
 
-    // ปรับโครงสร้าง Payload ให้ชื่อตรงกับที่ Apps Script ต้องการ 100%
-    const payload = {
-      action: 'saveRecord',
-      id: 'REC-' + Date.now(), // สร้าง ID อ้างอิงอัตโนมัติ
-      date: new Date().toLocaleString('th-TH'),
-      drug: drug?.name === 'อื่นๆ' ? otherDrug : drug?.name,
-      imp: imp,
-      conf: conf,
-      phase: 'ประเมินเบื้องต้น',
-      reasons: reasons.join(', '),
-      history: history,
-      risks: risks.join(', '),
-      notes: '', // ปล่อยว่าง หรือเชื่อมกับตัวแปรกล่องข้อความถ้ามี
-      contact: '',
-      status: 'รอติดต่อ'
-    };
+try {
+
+  const recordId = await getNextRecordId();
+  setCurrentRecordId(recordId);
+
+  const payload = {
+
+    action: 'saveRecord',
+
+    id: recordId,
+
+    date: new Date().toLocaleString('th-TH'),
+
+    // 👤 ผู้ประเมิน
+    nickname: nickname,
+    contact: formatPhoneForSheet(contact),
+
+    // 📋 แบบประเมิน
+    drug: drug?.name === 'อื่นๆ'
+      ? otherDrug
+      : drug?.name,
+
+    imp: imp,
+    conf: conf,
+
+    phase: 'ประเมินเบื้องต้น',
+
+    reasons: reasons.join(', '),
+
+    history: history,
+
+    risks: risks.join(', '),
+
+    notes: '',
+
+    status: 'รอติดต่อ'
+  };
+
+  const response = await fetch(GOOGLE_SCRIPT_URL, {
+
+    method: 'POST',
+
+    mode: 'cors',
+
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+
+    body: JSON.stringify(payload)
+
+  });
+
+  // อ่านผลลัพธ์
+  const resultText = await response.text();
+
+  console.log("สถานะการบันทึก:", resultText);
+
+  // สำเร็จ
+  setStep(7);
+  setCountdown(15);
+
+} catch (error) {
+
+  console.error(
+    "เกิดข้อผิดพลาดในการบันทึก:",
+    error
+  );
+
+  alert(
+    "ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง"
+  );
+
+} finally {
+
+  setIsLoading(false);
+
+}
+};
+
+  const handleActionClick = async (actionType) => {
+    if (!currentRecordId) {
+      alert('ไม่พบรหัสรายการ กรุณาบันทึกแบบประเมินใหม่อีกครั้ง');
+      return;
+    }
+
+    setIsLoading(true);
 
     try {
-      const response = await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
+      await postToSheet({
+        action: 'updateStatus',
+        id: currentRecordId,
+        status: actionType,
+        notes: `ผู้รับประเมินกดปุ่ม: ${actionType}`
       });
 
-      // อ่านผลลัพธ์แบบ Text เพื่อป้องกัน Error จากการ Parse JSON ที่ผิดพลาด
-      const resultText = await response.text(); 
-      console.log("สถานะการบันทึก:", resultText);
-
-      // เมื่อบันทึกสำเร็จ ให้ข้ามไปหน้า 7
-      setStep(7);
-      setCountdown(15);
+      setMessageBox(`ระบบได้รับความประสงค์ "${actionType}" ของคุณเรียบร้อยแล้ว เจ้าหน้าที่จะติดต่อกลับในไม่ช้าครับ/ค่ะ`);
     } catch (error) {
-      console.error("เกิดข้อผิดพลาดในการบันทึก:", error);
-      alert("ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
+      console.error('Error updating request action:', error);
+      alert('ไม่สามารถบันทึกความประสงค์ได้ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleActionClick = (actionType) => {
-    setMessageBox(`ระบบได้รับความประสงค์ "${actionType}" ของคุณเรียบร้อยแล้ว เจ้าหน้าที่จะติดต่อกลับในไม่ช้าครับ/ค่ะ`);
   };
 
   const closeMessageBox = () => {
@@ -231,24 +350,117 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-xl mx-auto px-4 py-8">
-        
-        {/* Title & Progress */}
-        <div className="text-center mb-8 animate-fade-in">
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">แบบประเมินความพร้อมในการเลิกสารเสพติด</h1>
-          <h2 className="text-slate-500 font-medium text-sm mb-6">{titles[step]}</h2>
-          
-          <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
-            <div 
-              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500 ease-out" 
-              style={{ width: `${(step / 7) * 100}%` }}
-            />
-          </div>
-        </div>
+     <main className="max-w-xl mx-auto px-4 py-8">
+
+  {/* Title & Progress */}
+  <div className="text-center mb-8 animate-fade-in">
+
+    {/* Main Title */}
+    <h1 className="text-2xl font-bold text-slate-800 mb-6">
+      แบบประเมินความพร้อมในการเลิกสารเสพติด
+    </h1>
+
+    {/* Progress Bar */}
+    <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner mb-4">
+      <div
+        className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500 ease-out"
+        style={{ width: `${(step / 7) * 100}%` }}
+      />
+    </div>
+
+    {/* Step Title */}
+    <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 rounded-full">
+
+      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+
+      <h2 className="text-blue-700 font-semibold text-sm">
+        {titles[step]}
+      </h2>
+
+    </div>
+
+  </div>
 
         {/* Card Content */}
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/50 border border-slate-100 animate-fade-in">
           
+          {/* STEP 0 : ข้อมูลผู้ประเมิน */}
+          {step === 0 && (
+
+            <div className="bg-white rounded-3xl shadow-lg p-8 border border-slate-200">
+
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold text-slate-800">
+                  ข้อมูลผู้เข้ารับการประเมิน
+                </h2>
+
+                <p className="text-slate-500 mt-2">
+                กรุณากรอกข้อมูลก่อนเริ่มทำแบบประเมิน
+                </p>
+              </div>
+
+            <div className="space-y-5">
+
+            {/* ชื่อเล่น */}
+          <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                ชื่อผู้เข้ารับการประเมิน (ชื่อเล่น)
+              </label>
+
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="กรอกชื่อเล่น"
+            className="w-full px-4 py-4 border border-slate-300 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-500"
+          />
+        </div>
+
+      {/* เบอร์โทร */}
+      <div>
+        <label className="block text-sm font-semibold text-slate-700 mb-2">
+          เบอร์โทรศัพท์
+        </label>
+
+        <input
+          type="text"
+          inputMode="numeric"
+          value={contact}
+          onChange={(e) => setContact(normalizePhoneNumber(e.target.value))}
+          placeholder="08xxxxxxxx"
+          maxLength={10}
+          className="w-full px-4 py-4 border border-slate-300 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-500"
+        />
+      </div>
+
+      {/* ปุ่ม */}
+      <button
+
+        onClick={() => {
+
+          if (!nickname.trim()) {
+            alert('กรุณากรอกชื่อเล่น');
+            return;
+          }
+
+          if (contact.length < 9) {
+            alert('กรุณากรอกเบอร์โทรให้ถูกต้อง');
+            return;
+          }
+
+          setStep(1);
+
+        }}
+
+        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-blue-500 text-white rounded-2xl font-bold text-lg hover:opacity-90 transition-all"
+      >
+        เริ่มทำแบบประเมิน
+      </button>
+
+    </div>
+  </div>
+)}
+
           {/* STEP 1: Select Drug */}
           {step === 1 && (
             <div className="flex flex-col gap-4 animate-fade-in">
@@ -418,14 +630,16 @@ export default function App() {
 
               <div className="flex flex-col gap-3">
                 <button 
-                  onClick={() => handleActionClick('นัดหมายพบแพทย์')}
-                  className="py-4 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 hover:scale-[1.02] transition-transform flex items-center justify-center gap-2"
+                  onClick={() => handleActionClick('ขอนัดหมายคุยกับแพทย์')}
+                  disabled={isLoading}
+                  className="py-4 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 hover:scale-[1.02] transition-transform flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
                   <Calendar size={20} /> นัดหมายพูดคุยกับแพทย์
                 </button>
                 <button 
-                  onClick={() => handleActionClick('ขอคำปรึกษาเพิ่มเติม')}
-                  className="py-4 px-6 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center justify-center gap-2"
+                  onClick={() => handleActionClick('ขอรับคำปรึกษาผ่านแชท/โทร')}
+                  disabled={isLoading}
+                  className="py-4 px-6 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <MessageCircle size={20} /> ขอรับคำปรึกษาผ่านแชท/โทร
                 </button>
