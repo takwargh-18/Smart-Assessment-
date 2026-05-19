@@ -5,6 +5,8 @@ import {
   Award, Lightbulb, HeartPulse, Activity
 } from 'lucide-react';
 
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxgC9rWpNHmynaTk_b8YB9p5QDGcuvnisBcthzX6VTWFBtKTUlssK41eUVENIu6_M4feA/exec';
+
 const drugs = [
   { name: 'ยาบ้า', Icon: Pill, color: 'text-rose-500', bg: 'bg-rose-100', desc: 'การประเมินจะช่วยให้เราวางแผนฟื้นฟูระบบประสาทได้อย่างถูกต้อง' },
   { name: 'ไอซ์', Icon: Hexagon, color: 'text-cyan-500', bg: 'bg-cyan-100', desc: 'ดูแลรักษาระบบสมองควบคู่กับสภาพจิตใจ' },
@@ -103,14 +105,49 @@ export default function App() {
     if (step > 1) setStep(step - 1);
   };
 
-  const handleSave = () => {
+  // ✅ โค้ดใหม่ที่บันทึกข้อมูลจริง
+  const handleSave = async () => {
     setIsLoading(true);
-    // Simulate API delay
-    setTimeout(() => {
-      setIsLoading(false);
+
+    // ปรับโครงสร้าง Payload ให้ชื่อตรงกับที่ Apps Script ต้องการ 100%
+    const payload = {
+      action: 'saveRecord',
+      id: 'REC-' + Date.now(), // สร้าง ID อ้างอิงอัตโนมัติ
+      date: new Date().toLocaleString('th-TH'),
+      drug: drug?.name === 'อื่นๆ' ? otherDrug : drug?.name,
+      imp: imp,
+      conf: conf,
+      phase: 'ประเมินเบื้องต้น',
+      reasons: reasons.join(', '),
+      history: history,
+      risks: risks.join(', '),
+      notes: '', // ปล่อยว่าง หรือเชื่อมกับตัวแปรกล่องข้อความถ้ามี
+      contact: '',
+      status: 'รอติดต่อ'
+    };
+
+    try {
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      // อ่านผลลัพธ์แบบ Text เพื่อป้องกัน Error จากการ Parse JSON ที่ผิดพลาด
+      const resultText = await response.text(); 
+      console.log("สถานะการบันทึก:", resultText);
+
+      // เมื่อบันทึกสำเร็จ ให้ข้ามไปหน้า 7
       setStep(7);
       setCountdown(15);
-    }, 1200);
+    } catch (error) {
+      console.error("เกิดข้อผิดพลาดในการบันทึก:", error);
+      alert("ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleActionClick = (actionType) => {
@@ -122,7 +159,6 @@ export default function App() {
     resetApp();
   };
 
-  // ปรับไล่เฉดสีใหม่ให้ชัดเจนและตัดกับพื้นหลังมากขึ้น
   const getScaleStyle = (num, isActive) => {
     if (!isActive) return 'bg-slate-50/50 border-slate-200 text-slate-500 hover:bg-slate-100 hover:border-slate-300 hover:text-slate-700 hover:shadow-sm';
     
@@ -184,7 +220,6 @@ export default function App() {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm">
         <div className="max-w-xl mx-auto px-4 py-4 text-center flex items-center justify-center gap-3">
-          {/* เรียกใช้ไฟล์รูปจากโฟลเดอร์ public */}
           <img 
             src="/logo.png" 
             alt="โลโก้โรงพยาบาล" 
@@ -200,10 +235,8 @@ export default function App() {
         
         {/* Title & Progress */}
         <div className="text-center mb-8 animate-fade-in">
-        <h1 className="text-2xl font-bold text-slate-800 mb-2">แบบประเมินความพร้อมในการเลิกสารเสพติด</h1>
+          <h1 className="text-2xl font-bold text-slate-800 mb-2">แบบประเมินความพร้อมในการเลิกสารเสพติด</h1>
           <h2 className="text-slate-500 font-medium text-sm mb-6">{titles[step]}</h2>
-          
-          
           
           <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
             <div 
