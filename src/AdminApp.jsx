@@ -3,7 +3,7 @@ import {
   CheckCircle, Calendar, MessageCircle, ShieldAlert, Pill, 
   Hexagon, Leaf, Wine, Flame, HelpCircle, Award, Lightbulb, 
   HeartPulse, FileText, BarChart3, Search, Filter, Phone, 
-  RefreshCw, Users, AlertTriangle, Check
+  RefreshCw, Users, AlertTriangle, Check, Lock, LogOut, Eye, EyeOff
 } from 'lucide-react';
 
 // ==========================================
@@ -11,9 +11,83 @@ import {
 // ⚠️ ต้องเป็นลิงก์ /exec เท่านั้น ไม่ใช่ลิงก์ /edit ของ Sheets
 // ==========================================
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxgC9rWpNHmynaTk_b8YB9p5QDGcuvnisBcthzX6VTWFBtKTUlssK41eUVENIu6_M4feA/exec';
+const ADMIN_USERNAME = 'admin';
+const ADMIN_PASSWORD = 'PSM11288';
+const ADMIN_AUTH_KEY = 'smartAssessmentAdminAuth';
+
+const normalizePhoneFromSheet = (value) => String(value || '').replace(/^'/, '');
+const WAITING_STATUS = 'รอติดต่อ';
+
+const normalizeSheetRow = (item) => ({
+  id: item.ID || item.id || '',
+  date: item['วันที่'] || item.date || '',
+  nickname: item['ชื่อเล่น'] || item.nickname || '',
+  drug: item['ประเภท'] || item.drug || '',
+  imp: Number(item['ความสำคัญ'] || item.imp) || 0,
+  conf: Number(item['ความมั่นใจ'] || item.conf) || 0,
+  phase: item['ระยะ'] || item.phase || '',
+  reasons: item['สาเหตุ'] || item.reasons || '',
+  history: item['ประวัติ'] || item.history || '',
+  risks: item['ความเสี่ยง'] || item.risks || '',
+  notes: item['บันทึก'] || item.notes || '',
+  contact: normalizePhoneFromSheet(item['เบอร์โทร'] || item.contact),
+  status: item['สถานะ'] || item.status || WAITING_STATUS
+});
+
+const hasAssessmentDetails = (record) => Boolean(
+  record.nickname ||
+  record.drug ||
+  record.contact ||
+  record.date ||
+  record.imp ||
+  record.conf ||
+  record.phase ||
+  record.reasons ||
+  record.history ||
+  record.risks
+);
+
+const mergeSheetRows = (rawData) => {
+  const byId = new Map();
+  const noIdRows = [];
+
+  rawData.map(normalizeSheetRow).forEach((record) => {
+    if (!record.id) {
+      noIdRows.push(record);
+      return;
+    }
+
+    const existing = byId.get(record.id);
+    if (!existing) {
+      byId.set(record.id, record);
+      return;
+    }
+
+    const detailRecord = hasAssessmentDetails(record) ? record : existing;
+    const statusRecord = record.status !== WAITING_STATUS || !existing.status ? record : existing;
+    const notesRecord = record.notes ? record : existing;
+
+    byId.set(record.id, {
+      ...existing,
+      ...Object.fromEntries(
+        Object.entries(detailRecord).filter(([, value]) => value !== '' && value !== 0)
+      ),
+      id: record.id,
+      status: statusRecord.status || WAITING_STATUS,
+      notes: notesRecord.notes || ''
+    });
+  });
+
+  return [...byId.values(), ...noIdRows].filter(hasAssessmentDetails);
+};
 
 export default function App() {
 
+  const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem(ADMIN_AUTH_KEY) === 'true');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [records, setRecords] = useState([]);
   const [isFetching, setIsFetching] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,8 +98,35 @@ export default function App() {
 
   // โหลดข้อมูลอัตโนมัติเมื่อเปิดหน้า
   useEffect(() => {
-    fetchRecords();
-  }, []);
+    if (isAuthenticated) {
+      fetchRecords();
+    }
+  }, [isAuthenticated]);
+
+  const handleLogin = (event) => {
+    event.preventDefault();
+
+    if (loginUsername.trim() === ADMIN_USERNAME && loginPassword === ADMIN_PASSWORD) {
+      sessionStorage.setItem(ADMIN_AUTH_KEY, 'true');
+      setIsAuthenticated(true);
+      setLoginError('');
+      setLoginPassword('');
+      return;
+    }
+
+    setLoginError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem(ADMIN_AUTH_KEY);
+    setIsAuthenticated(false);
+    setRecords([]);
+    setSelectedRecord(null);
+    setAppointmentModal(false);
+    setLoginUsername('');
+    setLoginPassword('');
+    setLoginError('');
+  };
 
   // ✅ ฟังก์ชันดึงข้อมูล
  const fetchRecords = async () => {
@@ -38,34 +139,41 @@ export default function App() {
 
     const rawData = await response.json();
 
+    const mergedData = mergeSheetRows(rawData);
+    setRecords(mergedData);
+    setLastUpdated(new Date().toLocaleString('th-TH'));
+    return;
+
     // ✅ แปลงชื่อคอลัมน์ภาษาไทย → อังกฤษ
     const normalizedData = rawData.map(item => ({
 
-      id: item.ID || '',
+  id: item.ID || '',
 
-      date: item['วันที่'] || '',
+  date: item['วันที่'] || '',
 
-      drug: item['ประเภท'] || '',
+  nickname: item['ชื่อเล่น'] || '',
 
-      imp: Number(item['ความสำคัญ']) || 0,
+  drug: item['ประเภท'] || '',
 
-      conf: Number(item['ความมั่นใจ']) || 0,
+  imp: Number(item['ความสำคัญ']) || 0,
 
-      phase: item['ระยะ'] || '',
+  conf: Number(item['ความมั่นใจ']) || 0,
 
-      reasons: item['สาเหตุ'] || '',
+  phase: item['ระยะ'] || '',
 
-      history: item['ประวัติ'] || '',
+  reasons: item['สาเหตุ'] || '',
 
-      risks: item['ความเสี่ยง'] || '',
+  history: item['ประวัติ'] || '',
 
-      notes: item['บันทึก'] || '',
+  risks: item['ความเสี่ยง'] || '',
 
-      contact: item['เบอร์โทร'] || '',
+  notes: item['บันทึก'] || '',
 
-      status: item['สถานะ'] || 'รอติดต่อ'
+  contact: normalizePhoneFromSheet(item['เบอร์โทร']),
 
-    }));
+  status: item['สถานะ'] || 'รอติดต่อ'
+
+}));
 
     setRecords(normalizedData);
 
@@ -104,14 +212,32 @@ export default function App() {
     );
 
     setSelectedRecord(null);
+
+    try {
+      await postToSheet({
+        action: 'updateStatus',
+        id,
+        status: newStatus
+      });
+    } catch (error) {
+      console.error("Error updating status:", error);
+      alert('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
+    }
   };
 
   // ระบบกรองข้อมูล
   const filteredRecords = records.filter(r => {
-    const safeNotes = (r.notes || '').toLowerCase();
-    const safeContact = (r.contact || '').toLowerCase();
-    const safeDrugName = (r.drug === 'อื่นๆ' ? (r.otherDrug || '') : (r.drug || '')).toLowerCase();
-    const safeSearchTerm = (searchTerm || '').toLowerCase();
+    const safeNotes = String(r.notes || '').toLowerCase();
+
+    const safeContact = String(r.contact || '').toLowerCase();
+
+    const safeDrugName = String(
+      r.drug === 'อื่นๆ'
+        ? (r.otherDrug || '')
+        : (r.drug || '')
+      ).toLowerCase();
+
+    const safeSearchTerm = String(searchTerm || '').toLowerCase();
 
     const matchSearch = safeNotes.includes(safeSearchTerm) || 
                         safeContact.includes(safeSearchTerm) ||
@@ -134,6 +260,95 @@ export default function App() {
     if (Array.isArray(str)) return str;
     return str.split(',').map(s => s.trim()).filter(s => s);
   };
+  const postToSheet = async (payload) => {
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify(payload)
+    });
+
+    return response.text();
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-100 text-slate-800 flex items-center justify-center px-4" style={{ fontFamily: "'Prompt', sans-serif" }}>
+        <style dangerouslySetInnerHTML={{ __html: `
+          @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+          @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+          .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        `}} />
+        <form onSubmit={handleLogin} className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl shadow-slate-200/70 p-8 animate-fade-in">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl">
+              <Lock size={24} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">เข้าสู่ระบบเจ้าหน้าที่</h1>
+              <p className="text-sm text-slate-500 mt-1">ระบบจัดการข้อมูลประเมิน</p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">ชื่อผู้ใช้</label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => {
+                  setLoginUsername(e.target.value);
+                  setLoginError('');
+                }}
+                className="w-full px-4 py-3 border border-slate-300 rounded-xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all"
+                autoComplete="username"
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">รหัสผ่าน</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={loginPassword}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    setLoginError('');
+                  }}
+                  className="w-full px-4 py-3 pr-12 border border-slate-300 rounded-xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all"
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg"
+                  aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="px-4 py-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl text-sm font-semibold">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 transition-colors"
+            >
+              เข้าสู่แดชบอร์ด
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "'Prompt', sans-serif" }}>
@@ -166,6 +381,13 @@ export default function App() {
             >
               <RefreshCw size={16} className={isFetching ? "animate-spin text-indigo-300" : ""} />
               <span className="hidden sm:inline-block">{isFetching ? 'กำลังซิงค์...' : 'รีเฟรช'}</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-lg font-medium text-sm transition-colors"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline-block">ออกจากระบบ</span>
             </button>
           </div>
         </div>
@@ -295,6 +517,7 @@ export default function App() {
               <table className="w-full text-left border-collapse whitespace-nowrap">
                 <thead>
                   <tr className="bg-slate-50/80 text-slate-500 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
+                    <th className="py-4 px-6">ชื่อเล่น</th>
                     <th className="py-4 px-6">สถานะดำเนินการ</th>
                     <th className="py-4 px-6">วันที่รับเรื่อง</th>
                     <th className="py-4 px-6">สารที่ประเมิน</th>
@@ -317,38 +540,84 @@ export default function App() {
                   ) : (
                     filteredRecords.map((r) => {
                       const isWaiting = r.status === 'รอติดต่อ';
-                      const stColor = isWaiting ? 'bg-rose-100 text-rose-700 border-rose-200' : r.status === 'นัดหมายแล้ว' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                      const isDoctorRequest = r.status === 'ขอนัดหมายคุยกับแพทย์';
+                      const isConsultRequest = r.status === 'ขอรับคำปรึกษาผ่านแชท/โทร';
+                      const stColor = isWaiting
+                        ? 'bg-rose-100 text-rose-700 border-rose-200'
+                        : isDoctorRequest
+                          ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                          : isConsultRequest
+                            ? 'bg-amber-100 text-amber-700 border-amber-200'
+                            : r.status === 'นัดหมายแล้ว'
+                              ? 'bg-blue-100 text-blue-700 border-blue-200'
+                              : 'bg-emerald-100 text-emerald-700 border-emerald-200';
                       return (
                         <tr key={r.id} className="hover:bg-slate-50 transition-colors group">
-                          <td className="py-4 px-6">
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${stColor} flex items-center gap-1.5 w-max`}>
-                              {isWaiting && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>}
-                              {r.status}
-                            </span>
-                          </td>
-                          <td className="py-4 px-6 font-medium text-slate-600 font-sans">{r.date}</td>
-                          <td className="py-4 px-6">
-                            <span className="font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-md">
-                              {r.drug === 'อื่นๆ' && r.otherDrug ? r.otherDrug : r.drug}
-                            </span>
-                          </td>
-                          <td className="py-4 px-6 text-center">
-                            <div className="inline-flex items-center bg-slate-50 rounded-lg px-2 py-1 border border-slate-100">
-                              <span className={`font-bold font-sans ${r.imp >= 4 ? 'text-rose-600' : 'text-slate-600'}`}>{r.imp}</span>
-                              <span className="text-slate-300 font-normal mx-1">|</span>
-                              <span className={`font-bold font-sans ${r.conf >= 4 ? 'text-emerald-600' : 'text-slate-600'}`}>{r.conf}</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-6 font-mono text-slate-700 font-medium">{r.contact}</td>
-                          <td className="py-4 px-6 text-right">
-                            <button 
-                              onClick={() => setSelectedRecord(r)} 
-                              className="px-4 py-1.5 bg-white border border-slate-300 text-slate-700 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50 rounded-lg font-semibold transition-colors shadow-sm group-hover:shadow"
-                            >
-                              เปิดดูเคส
-                            </button>
-                          </td>
-                        </tr>
+
+  {/* 👤 ชื่อเล่น */}
+  <td className="py-4 px-6">
+    <div className="font-bold text-slate-800">
+      {r.nickname || '-'}
+    </div>
+  </td>
+
+  {/* 📌 สถานะ */}
+  <td className="py-4 px-6">
+    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${stColor} flex items-center gap-1.5 w-max`}>
+      {isWaiting && (
+        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+      )}
+      {r.status}
+    </span>
+  </td>
+
+  {/* 📅 วันที่ */}
+  <td className="py-4 px-6 font-medium text-slate-600 font-sans">
+    {r.date}
+  </td>
+
+  {/* 💊 สารเสพติด */}
+  <td className="py-4 px-6">
+    <span className="font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-md">
+      {r.drug === 'อื่นๆ' && r.otherDrug
+        ? r.otherDrug
+        : r.drug}
+    </span>
+  </td>
+
+  {/* 📊 คะแนน */}
+  <td className="py-4 px-6 text-center">
+    <div className="inline-flex items-center bg-slate-50 rounded-lg px-2 py-1 border border-slate-100">
+      <span className={`font-bold font-sans ${r.imp >= 4 ? 'text-rose-600' : 'text-slate-600'}`}>
+        {r.imp}
+      </span>
+
+      <span className="text-slate-300 font-normal mx-1">
+        |
+      </span>
+
+      <span className={`font-bold font-sans ${r.conf >= 4 ? 'text-emerald-600' : 'text-slate-600'}`}>
+        {r.conf}
+      </span>
+    </div>
+  </td>
+
+  {/* ☎️ เบอร์โทร */}
+  <td className="py-4 px-6 font-mono text-slate-700 font-medium">
+    {r.contact || '-'}
+  </td>
+
+  {/* 🔍 ปุ่ม */}
+  <td className="py-4 px-6 text-right">
+    <button
+      onClick={() => setSelectedRecord(r)}
+      className="px-4 py-1.5 bg-white border border-slate-300 text-slate-700 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50 rounded-lg font-semibold transition-colors shadow-sm group-hover:shadow"
+    >
+      เปิดดูเคส
+    </button>
+  </td>
+
+</tr>
                       );
                     })
                   )}
@@ -371,6 +640,9 @@ export default function App() {
                 <div>
                   <h3 className="text-lg font-bold text-slate-800 leading-tight">จัดการนัดหมายและประเมิน</h3>
                   <p className="text-xs text-slate-500 font-medium font-sans mt-0.5">รับเรื่อง: {selectedRecord.date}</p>
+                  <p className="text-sm text-indigo-600 font-semibold mt-1">
+                    ผู้ประเมิน: {selectedRecord.nickname || '-'}
+                  </p>
                 </div>
               </div>
               <button onClick={() => setSelectedRecord(null)} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
